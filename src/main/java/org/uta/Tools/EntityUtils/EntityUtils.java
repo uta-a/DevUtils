@@ -109,8 +109,9 @@ public class EntityUtils {
 
     public static List<LivingEntity> getEntitiesOnViewLine(
             LivingEntity viewer,
-            double length,
-            int count,
+            double length,      // 視線の長さ（進む距離）
+            double maxDistance, // 視線からの最大横ズレ（範囲）
+            int maxCount,
             LivingEntity exclude,
             List<Class<? extends LivingEntity>> allowedTypes,
             boolean ignoreBlocked
@@ -119,67 +120,77 @@ public class EntityUtils {
         Vector direction = eyeLoc.getDirection().normalize();
         World world = viewer.getWorld();
 
-        List<LivingEntity> candidates = new ArrayList<>();
+        List<LivingEntity> found = new ArrayList<>();
+        double step = 0.2;  // 間隔
 
-        // 周囲を少し広めに検索（視線の延長線上に限るので横幅を狭くする）
-        double searchRadius = 1.0; // 視線の周囲1ブロックだけ探すイメージ
-        Collection<Entity> nearby = world.getNearbyEntities(eyeLoc, searchRadius, searchRadius, searchRadius);
+        Vector originVec = eyeLoc.toVector();
 
-        for (Entity entity : nearby) {
-            if (!(entity instanceof LivingEntity)) continue;
-            if (entity.equals(viewer)) continue;
-            if (entity.equals(exclude)) continue;
+        for (double travelled = 0; travelled <= length; travelled += step) {
+            Vector currentPoint = originVec.clone().add(direction.clone().multiply(travelled));
+            Location checkLoc = currentPoint.toLocation(world);
 
-            LivingEntity target = (LivingEntity) entity;
+            // ここでmaxDistanceを使って範囲内のエンティティを探す
+            Collection<Entity> nearby = world.getNearbyEntities(checkLoc, maxDistance, maxDistance, maxDistance);
 
-            // 許可タイプチェック
-            if (allowedTypes != null && !allowedTypes.isEmpty()) {
-                boolean allowed = false;
-                for (Class<? extends LivingEntity> type : allowedTypes) {
-                    if (type.isInstance(target)) {
-                        allowed = true;
-                        break;
+            for (Entity entity : nearby) {
+                if (!(entity instanceof LivingEntity)) continue;
+                if (entity.equals(viewer)) continue;
+                if (exclude != null && entity.equals(exclude)) continue;
+
+                LivingEntity target = (LivingEntity) entity;
+
+                // 許可タイプチェック
+                if (allowedTypes != null && !allowedTypes.isEmpty()) {
+                    boolean allowed = false;
+                    for (Class<? extends LivingEntity> type : allowedTypes) {
+                        if (type.isInstance(target)) {
+                            allowed = true;
+                            break;
+                        }
+                    }
+                    if (!allowed) continue;
+                }
+
+                // 重複除外
+                if (found.contains(target)) continue;
+
+                // 視線ベクトルからターゲットへの横距離を計算（厳密に範囲内か判定）
+                Vector toTarget = target.getEyeLocation().toVector().subtract(originVec);
+                // 視線方向への投影距離
+                double projectionLength = toTarget.dot(direction);
+                if (projectionLength < 0 || projectionLength > length) continue; // 視線の後ろや範囲外
+
+                // 視線方向に沿った点からターゲットまでの距離
+                Vector projectedPoint = originVec.clone().add(direction.clone().multiply(projectionLength));
+                double lateralDistance = target.getEyeLocation().toVector().distance(projectedPoint);
+                if (lateralDistance > maxDistance) continue;
+
+                // ブロック遮蔽チェック
+                if (!ignoreBlocked) {
+                    RayTraceResult result = world.rayTraceBlocks(
+                            eyeLoc,
+                            direction,
+                            projectionLength,
+                            FluidCollisionMode.NEVER,
+                            true
+                    );
+                    if (result != null && result.getHitBlock() != null) {
+                        double hitDistance = result.getHitPosition().distance(originVec);
+                        if (hitDistance < projectionLength) {
+                            continue; // 遮蔽されている
+                        }
                     }
                 }
-                if (!allowed) continue;
-            }
+                found.add(target);
 
-            // 視線ベクトルとターゲットへのベクトルの角度を計算
-            Vector toTarget = target.getEyeLocation().toVector().subtract(eyeLoc.toVector());
-            double distance = toTarget.length();
-            if (distance > length) continue;
-
-            double dot = toTarget.clone().normalize().dot(direction);
-
-            // 視線にほぼ沿っているかどうか（dot = 1に近いほど真っすぐ）
-            // 0.95は約18度以内
-            if (dot < 0.95) continue;
-
-            // ブロック遮蔽チェック
-            if (!ignoreBlocked) {
-                RayTraceResult result = world.rayTraceBlocks(
-                        eyeLoc,
-                        direction,
-                        distance,
-                        FluidCollisionMode.NEVER,
-                        true
-                );
-                if (result != null && result.getHitBlock() != null) {
-                    // 衝突位置がターゲットよりも近ければ遮蔽されている
-                    if (result.getHitPosition().distance(eyeLoc.toVector()) < distance) {
-                        continue;
-                    }
+                if (found.size() >= maxCount) {
+                    return found;
                 }
             }
-
-            candidates.add(target);
         }
 
-        // 距離順にソート（近い順）
-        candidates.sort(Comparator.comparingDouble(e -> e.getEyeLocation().distanceSquared(eyeLoc)));
-
-        // 最大count件まで返す
-        return candidates.subList(0, Math.min(count, candidates.size()));
+        return found;
     }
+
 
 }
