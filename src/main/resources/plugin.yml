@@ -1,0 +1,4 @@
+name: DevUtils
+version: '1.0'
+main: org.uta.DevUtils.DevUtils
+api-version: '1.21'

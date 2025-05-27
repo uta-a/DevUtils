@@ -1,0 +1,15 @@
+# IntelliJ
+.idea/
+*.iml
+
+# Build output
+/target/
+
+# OSファイル
+.DS_Store
+Thumbs.db
+
+# プロジェクトの除外パス
+/.gradle/
+/build/
+/build/classes/java/main/
